@@ -737,6 +737,7 @@
   /* the patrol film's two rings, in the corner caption */
   #rpMine i.off{border-color:#ffa81c}
   #rpMine i.vic{border-color:#f6f4ee}
+  #rpMine i.hit{border-color:#7cc4ff}
   #rpMine b{font-weight:600;margin-right:14px}
 </style>
 </head>
@@ -1781,8 +1782,8 @@
 <h4>The patrol film</h4>
 <p>Every inquiry is filmed, as the stewards&rsquo; patrol cameras film a real race. <strong>Watch the inquiry</strong> sits beside <em>Replay stretch run</em> on the chart&rsquo;s header line, on the result screen and in Past charts, whenever the race had one.</p>
 <ul>
-<li><strong>Each incident twice:</strong> first <strong>head-on</strong>, from a camera up the track in front of the two horses, then <strong>from the air</strong>, above and behind them. It runs from about three seconds before the nudge to three and a half after, wherever on the track it happened, chutes included.</li>
-<li><strong>The rider who nudged</strong> is ringed in gold and <strong>the horse checked</strong> in white, both named bottom left. A caption marks the moment of the nudge (<em>No. 3 nudges No. 5</em>).</li>
+<li><strong>Each incident twice:</strong> first <strong>head-on</strong>, on a long lens from far up the track, then <strong>from the air</strong>, above and behind them. It runs from about three seconds before the nudge to three and a half after, wherever on the track it happened, chutes included.</li>
+<li><strong>The rider who nudged</strong> is ringed in gold and <strong>the horse checked</strong> in white, both named bottom left. If the horse nudged was sent into another&rsquo;s path, he is ringed in blue. Captions call the moment of the nudge and the moment of the check; a film that ended in a disqualification is the case the stewards ruled on, and shows it that way (<em>No. 3 bears out, slams into No. 5</em>).</li>
 <li><strong>It plays at half speed</strong> to start with; <strong>Half speed</strong> toggles it, as in the stretch replay. <strong>Play again</strong> starts it over; <strong>Back to chart</strong> or <kbd>Esc</kbd> returns you.</li>
 <li><strong>Up to three incidents</strong> a race are kept, one after another, each counted in the header.</li>
 </ul>
@@ -3828,7 +3829,7 @@
 /* which build this is, printed at the foot of the home page — worth having
    when the game is installed from the home screen and there is no address
    bar to tell you */
-const VERSION = 'RTR47.5';
+const VERSION = 'RTR47.8';
 const clamp = (v,a,b) => v<a?a:v>b?b:v;
 
 /* ══ the device ═════════════════════════════════════════════════════════
@@ -7816,10 +7817,10 @@ function trimOf(buf){
   return {from, len: to - from};
 }
 /* plays a clip at AC time `when`; returns how long it runs (0 if it isn't ready) */
-function clip(name, when){
+function clip(name, when, vol){   // (RTR47.7) vol: optional, a fraction of its usual level
   const c = CLIPS[name]; if (!AC || !c) return 0;
   const src = AC.createBufferSource(); src.buffer = c.buf;
-  const g = AC.createGain(); g.gain.value = CLIP_GAIN * (CLIP_LIFT[name] || 1);
+  const g = AC.createGain(); g.gain.value = CLIP_GAIN * (CLIP_LIFT[name] || 1) * (vol == null ? 1 : vol);
   src.connect(g).connect(master);
   src.start(when, c.from, c.len);
   clipsLive.push(src);
@@ -9201,7 +9202,7 @@ function tryNudge(src, dir){
   if (!t || !roomFor(t, dir, pool.concat(src === me ? [] : [src]))) return null;
   src.nudgesLeft--; src.nudgesUsed++; src.nudgeCool = NUDGE_COOL;
   t.push = { dir, left: NUDGE_W };
-  t.tag = { by: src.k, t: runT, early: runT < NUDGE_EARLY };
+  t.tag = { by: src.k, t: runT, early: runT < NUDGE_EARLY, hit: t.k };   // (RTR47.6) hit: for the film
   if (t !== me){ t.holdT = 0; t.seek = 0; t.seekT = 0; t.slotO = null; t.slotT = 0; t.slotV = 0; }
   if (src === me || t === me) nudgeSound();
   return t;
@@ -9248,7 +9249,8 @@ function noteCheck(v, b){
   if (b && fresh(b.tag) && b.tag.by !== v.k) tg = b.tag;
   else if (fresh(v.tag) && v.tag.by !== v.k) tg = v.tag;
   if (!tg) return;
-  INTERF.push({ by: tg.by, vic: v.k, early: tg.early, f: clamp(v.s/TOTAL, 0, 1), tn: tg.t });
+  INTERF.push({ by: tg.by, vic: v.k, early: tg.early, f: clamp(v.s/TOTAL, 0, 1), tn: tg.t,
+                hit: tg.hit, beh: b ? b.k : null, tc: runT });        // (RTR47.6) for the film
 }
 
 /* Hard separation — the backstop that makes passing through each other
@@ -10098,6 +10100,7 @@ function stewards(fin, interf){
     if (!off || !vic || off === vic || vic.cross < off.cross) continue;
     const behindL = (vic.t - off.t)*PAR/LENGTH;
     if (!e.early && behindL > DQ_LENGTHS) continue;
+    e.counts = true;                                // (RTR47.6) the film plays this one up
     const had = rulings.find(x => x.off === off);
     if (had){ if (vic.cross > had.vic.cross){ had.vic = vic; had.f = e.f; } }
     else rulings.push({ off, vic, f: e.f });
@@ -10120,8 +10123,8 @@ function stewards(fin, interf){
 const asRun = n => n.cross && n.cross !== n.place ? Object.assign({}, n, { place: n.cross }) : n;
 const pgmName = n => 'No. ' + n.pgm + ', ' + titleCase(n.name);
 function stewardsLine(n){
-  if (n.dq) return ' Disqualified for interference with ' + titleCase(n.dq.vic.name)
-                 + ' and placed ' + WORDS[n.place] + '.';
+  if (n.dq) return ' Disqualified for interfering with ' + titleCase(n.dq.vic.name)
+                 + ', who was forced to steady sharply, and placed ' + WORDS[n.place] + '.';
   if (n.placedBy) return ' Placed ' + WORDS[n.place] + ' through the disqualification of '
                        + titleCase(n.placedBy.name) + '.';
   return '';
@@ -10132,7 +10135,7 @@ function inquiryNote(rulings, interf){
   const txt = rulings.length
     ? rulings.map(ru => pgmName(ru.off) + ' (' + ru.off.jockey + '), was disqualified from '
         + WORDS[ru.off.cross] + ' and placed ' + WORDS[ru.off.place] + ' for interference with '
-        + pgmName(ru.vic) + ', ' + spotOf(ru.f) + '.').join(' ')
+        + pgmName(ru.vic) + ', who was forced to steady sharply, ' + spotOf(ru.f) + '.').join(' ')
     : 'The stewards looked into interference ' + spotOf(interf[0].f)
       + ' and left the order of finish unchanged.';
   return '<p class="chnote"><b>STEWARDS’ INQUIRY.</b> ' + txt + '</p>';
@@ -10581,6 +10584,8 @@ function patrolFilms(head){
     const i1 = clamp(Math.round((e.tn + PAT_POST)*PAT_HZ), 0, n - 1);
     if (i1 - i0 < 8) continue;
     films.push({ by: e.by, vic: e.vic, at: Math.round(e.tn*PAT_HZ) - i0, f: e.f,
+                 hit: e.hit == null ? e.vic : e.hit, beh: e.beh, dq: !!e.counts,   // (RTR47.6)
+                 ca: Math.round((e.tc == null ? e.tn : e.tc)*PAT_HZ) - i0,
                  s: P.s.map(a => a.slice(i0, i1 + 1)), w: P.w.map(a => a.slice(i0, i1 + 1)),
                  ph: P.ph.map(a => a[i0]) });
   }
@@ -10763,6 +10768,8 @@ function closeReplay(){
   RP.on = false;
   if (RP.mode === 'patrol'){                  // (RTR47.1)
     patRings.forEach(r => { r.visible = false; });
+    patPuffs.forEach(p => { p.visible = false; });     // (RTR47.6)
+    if (AC && crowdFilter) crowdFilter.frequency.value = 620;
     RP.speed = RP.keepSpeed || 1;
     document.querySelector('#replay .rpbug b').textContent = 'REPLAY';
     document.getElementById('rpClose').textContent = RP.closeText || 'BACK TO CHART';
@@ -10936,17 +10943,154 @@ function replayFrame(dt){
    them. Half speed to start with (HALF SPEED toggles it, as in the stretch
    replay). The rider who nudged is ringed in gold, the horse checked in
    white; a caption marks the moment of the nudge. */
-const patRings = [0xffa81c, 0xf6f4ee].map(c => {
+const patRings = [0xffa81c, 0xf6f4ee, 0x7cc4ff].map(c => {
   const g = new THREE.Group();
   const a = new THREE.Mesh(new THREE.RingGeometry(1.30, 1.66, 26), flat(c));
   a.rotation.x = -Math.PI/2; a.position.y = 0.07; g.add(a);
   const b = new THREE.Mesh(new THREE.RingGeometry(1.14, 1.30, 26), flat(0x15161a));
   b.rotation.x = -Math.PI/2; b.position.y = 0.06; g.add(b);
+  /* (RTR47.6) on the long lens a ring on the ground is a sliver: a marker over his head */
+  const pin = new THREE.Mesh(new THREE.ConeGeometry(0.26, 0.5, 4), flat(c));
+  pin.rotation.x = Math.PI; pin.position.y = 3.3; g.add(pin); g.userData.pin = pin;
   g.traverse(o => { o.renderOrder = 3; });
   g.visible = false; scene.add(g);
   return g;
 });
 const PAT_SHOTS = [['head', 'Head-on'], ['air', 'From the air']];
+/* (RTR47.6) The film makes the stewards' case. The race itself can't show
+   contact (a nudge moves only the horse nudged, and a check is a small easing
+   of speed), so what the film shows is built here, from the recording, as a
+   function of film time: where a horse is drawn, never where he was. A DQ gets
+   the lot. A "no change" gets a milder check and no contact. A film saved
+   before RTR47.6 has no `hit` and gets none of it. */
+const pEase = u => { u = clamp(u, 0, 1); return u*u*(3 - 2*u); };
+const pBump = (t, a, b, c) => t < b ? pEase((t - a)/(b - a)) : 1 - pEase((t - b)/(c - b));
+const PAT_TOUCH = 0.74;      // m across, centre to centre: the riders' boots meet
+const PAT_HEELS = 2.62;      // m along: nose to tail
+const PAT_DROP  = 2.4;       // m he loses to the check: a length
+const PAT_CLEAR = 2.5;       // m: the horses behind give way rather than be run through
+const patFxOut = { ds:[], dw:[], yaw:[], chk:[], on:false };
+function patFxFor(F){
+  if (F.fx !== undefined) return F.fx;
+  if (F.hit == null) return F.fx = null;
+  const fr = (a, i) => a[clamp(i, 0, a.length - 1)];
+  const W = k => { const v = fr(F.w[k], F.at); return v == null ? null : v/20; };
+  const Wb = W(F.by), Wh = W(F.hit);
+  const across = Wb == null || Wh == null ? 0 : Wh - Wb;
+  const fx = { sgn: Math.sign(across) || 1, need: Math.min(1.5, Math.max(0, Math.abs(across) - PAT_TOUCH)),
+               Tc: Math.max((F.ca - F.at)/RP.hz, 0.45), hs: 0, hw: 0 };
+  if (F.beh != null && F.beh !== F.vic){
+    const sb = fr(F.s[F.beh], F.ca), sv = fr(F.s[F.vic], F.ca);
+    const wb = fr(F.w[F.beh], F.ca), wv = fr(F.w[F.vic], F.ca);
+    if (sb != null && sv != null && sb > sv){
+      fx.hs = Math.min(3, Math.max(0, (sb - sv)/10 - PAT_HEELS));   // up on his heels
+      fx.hw = F.beh === F.by ? 0 : (wb - wv)/20*0.6;                // and on his line
+    }
+  }
+  return F.fx = fx;
+}
+function patFx(F, T){
+  const o = patFxOut, n = F.s.length, fx = patFxFor(F);
+  for (let k = 0; k < n; k++){ o.ds[k] = 0; o.dw[k] = 0; o.yaw[k] = 0; o.chk[k] = 0; }
+  o.on = !!fx;
+  if (!fx) return o;
+  const Tc = fx.Tc;
+  if (!F.dq){ o.chk[F.vic] = 0.45*pBump(T, Tc - 0.1, Tc + 0.2, Tc + 1.5); return o; }
+  /* the offender comes over, stays on him, and straightens up */
+  if (F.hit !== F.by){
+    const lug = (fx.need*pEase((T + 0.32)/0.32) + 0.45*pEase(T/0.25))*(1 - pEase((T - 0.35)/1.1));
+    o.dw[F.by] += fx.sgn*lug;
+    o.yaw[F.by] += fx.sgn*0.20*pBump(T, -0.32, 0.05, 0.6);
+    /* and the horse he hit is knocked off his line, further than he went */
+    o.dw[F.hit] += fx.sgn*0.28*pEase(T/0.2)*(1 - 0.5*pEase((T - 0.6)/1));
+    o.yaw[F.hit] += fx.sgn*0.20*pBump(T, 0, 0.18, 0.95);
+    if (F.hit !== F.vic) o.chk[F.hit] = 0.6*pBump(T, 0, 0.15, 1.0);
+  }
+  /* the horse checked: up on the heels, then snatched up, and a length gone */
+  const up = pEase((T - (Tc - 0.5))/0.4);
+  o.ds[F.vic] += fx.hs*up - (fx.hs + PAT_DROP)*pEase((T - Tc)/1.1);
+  o.dw[F.vic] += fx.hw*up + fx.sgn*0.16*Math.sin(Math.max(0, T - Tc)*5)*pBump(T, Tc, Tc + 0.4, Tc + 2);
+  o.yaw[F.vic] += -fx.sgn*0.16*pBump(T, Tc, Tc + 0.2, Tc + 1.1);
+  o.chk[F.vic] = pBump(T, Tc - 0.08, Tc + 0.14, Tc + 2.6);
+  return o;
+}
+/* the look of a horse snatched up: his front end comes up, his neck and head
+   go up from the withers, and his rider stands up and takes a hold */
+function patCheckPose(h, ph, c){
+  const u = h.userData, w = ph*Math.PI*2, parts = [u.neck, u.mane, u.head];
+  h.rotation.z = 0.10*c; h.position.y = 0.14*c;
+  if (!u.pn) u.pn = parts.map(p => ({ x: p.position.x, r: p.rotation.z }));
+  const a = (0.42 + 0.06*Math.sin(w*2))*c, ca = Math.cos(a), sa = Math.sin(a);
+  parts.forEach((p, i) => {
+    const b = u.pn[i], dx = b.x - SV_NECK[0], dy = p.position.y - SV_NECK[1];
+    p.position.x = SV_NECK[0] + dx*ca - dy*sa;
+    p.position.y = SV_NECK[1] + dx*sa + dy*ca;
+    p.rotation.z = (i === 2 ? p.rotation.z : b.r) + a;
+  });
+  poseRider(u, w, 0.85 - 1.85*c, 0, 0.85*c);
+  u.jock.position.y += 0.06*c;
+}
+/* two puffs of dirt, one at the contact and one at the check; laid out from
+   film time, so they play again and at half speed with the rest */
+const PUFF_N = 30;
+const patPuffs = [0, 1].map(() => {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(PUFF_N*3), 3));
+  const m = M_DUST.clone(); m.size = 0.30;
+  const p = new THREE.Points(g, m); p.frustumCulled = false; p.visible = false; scene.add(p);
+  p.userData.r = Array.from({ length: PUFF_N }, () => [Math.random() - 0.5, Math.random(), Math.random() - 0.5]);
+  return p;
+});
+function patPuff(p, o, tau){
+  p.visible = !!o && tau >= 0 && tau < 1.1;
+  if (!p.visible) return;
+  const a = p.geometry.attributes.position;
+  p.userData.r.forEach((r, i) => a.setXYZ(i,
+    o.x + o.hx*tau*9 + r[0]*(0.5 + 4.5*tau),
+    0.1 + r[1]*tau*3.2 - 2.2*tau*tau,
+    o.z + o.hz*tau*9 + r[2]*(0.5 + 4.5*tau)));
+  a.needsUpdate = true;
+  p.material.opacity = 0.8*(1 - tau/1.1);
+}
+/* the long lens: as far up the track as the track stays straight enough to
+   see down, because from that far off the field stacks up and a gap closes */
+function patHeadDist(F){
+  const k = F.by, S = F.s[k].filter(v => v != null);
+  if (!S.length) return 46;
+  const a = S[0]/10, b = S[S.length - 1]/10, w = (F.w[k].find(v => v != null) || 0)/20;
+  for (const D of [130, 100, 75, 46]){
+    if (D === 46) return D;
+    let ok = true;
+    for (const s of [a, b]){
+      const p0 = patWhere(s, w), p1 = patWhere(s + D, w);
+      const dx = p1.x - p0.x, dz = p1.z - p0.z, L = Math.hypot(dx, dz) || 1;
+      for (let u = 0.2; u < 0.9; u += 0.2){
+        const q = patWhere(s + D*u, w);
+        if (Math.abs((q.x - p0.x)*dz - (q.z - p0.z)*dx)/L > 2.5) ok = false;
+      }
+      if (!isFinite(p1.x + p1.z)) ok = false;
+    }
+    if (ok) return D;
+  }
+  return 46;
+}
+/* (RTR47.8) a patrol camera hears none of this: the film's thud and whinny, faint */
+const PAT_FAINT = 0.12;
+function patThud(){
+  if (!AC) return;
+  const t = AC.currentTime;
+  if (CLIPS.nudge) clip('nudge', t, PAT_FAINT);
+  else if (CLIPS.bump) clip('bump', t, PAT_FAINT);
+  else burst({ freq:110, Q:0.7, gain:0.34*PAT_FAINT, attack:0.002, decay:0.16 });
+}
+function patSay(F, D, second){
+  const no = k => 'No. ' + D.pp[k];
+  if (F.hit == null) return no(F.by) + ' nudges No. ' + D.pp[F.vic];
+  if (!F.dq) return second ? no(F.vic) + ' checks for room' : no(F.by) + ' nudges ' + no(F.hit);
+  if (!second) return no(F.by) + ' bears ' + (patFxFor(F).sgn > 0 ? 'out' : 'in') + ', slams into ' + no(F.hit);
+  return (F.hit !== F.vic ? no(F.hit) + ' forced across ' + no(F.vic) + ' · ' : '')
+       + no(F.vic) + ' steadied sharply, loses position';
+}
 const _pc = new THREE.Vector3(), _pt = new THREE.Vector3();
 function patWhere(s, w){
   const t = trackFor(RP.plan, s);
@@ -10959,6 +11103,7 @@ function patLabels(){
     + (n > 1 ? ' · incident ' + (sh.fi + 1) + ' of ' + n : '');
   const who = k => 'No. ' + D.pp[k] + ' ' + titleCase(D.names[k] || '');
   document.getElementById('rpMine').innerHTML = '<i class="off"></i><b>' + who(F.by) + '</b>'
+    + (F.hit != null && F.hit !== F.vic && F.hit !== F.by ? '<i class="hit"></i><b>' + who(F.hit) + '</b>' : '')
     + '<i class="vic"></i><b>' + who(F.vic) + '</b>';
 }
 function patRestart(){
@@ -10972,6 +11117,10 @@ function patStartShot(){
   RP.t = 0; RP.snap = true; RP.called = false;
   RP.phase = F.ph.map(p => p/100);
   RP.prevS = F.s.map(a => a[0]);
+  RP.called2 = RP.fx1 = RP.fx2 = false; RP.puff = [null, null]; RP.gasp = 0;   // (RTR47.6)
+  patPuffs.forEach(p => { p.visible = false; });
+  if (sh.cam === 'head') RP.headD = patHeadDist(F);
+  patRings.forEach(r => { r.userData.pin.visible = sh.cam === 'head' && RP.headD > 46; });
   patLabels();
 }
 function openPatrol(data, back){
@@ -10994,6 +11143,7 @@ function openPatrol(data, back){
   RP.horses = data.ids.map((id, k) => { const h = makeHorse(id, id, data.jk ? riderSeed(data.jk[k]) : undefined,
     data.pp ? clothOf(id, data.pp[k]) : null); scene.add(h); return h; });
   RP.keepSpeed = RP.speed; RP.speed = 0.5;
+  if (AC && AC.state !== 'running'){ try { AC.resume().catch(()=>{}); } catch(e){} }   // (RTR47.6)
   RP.closeText = document.getElementById('rpClose').textContent;
   document.getElementById('rpClose').textContent = back === 'history' ? 'BACK TO CHARTS' : 'BACK TO CHART';
   document.querySelector('#replay .rpbug b').textContent = 'INQUIRY';
@@ -11016,26 +11166,61 @@ function patrolFrame(dt){
   }
   const x = clamp(RP.t*hz, 0, N - 1), i0 = Math.floor(x), i1 = Math.min(N - 1, i0 + 1), f = x - i0;
   const TOT = RP.plan.D, at = [];
-  let off = null, vic = null;
+  let off = null, vic = null, hit = null;
+  /* (RTR47.6) where each is drawn: where he was, and then the case against */
+  const T = (x - F.at)/hz, FX = patFx(F, T), pos = [];
   RP.horses.forEach((h, k) => {
     const S = F.s[k], W = F.w[k];
-    if (S[i0] == null || S[i1] == null){ h.visible = false; return; }
+    if (S[i0] == null || S[i1] == null) return;
+    pos.push({ k, s: (S[i0] + (S[i1] - S[i0])*f)/10 + FX.ds[k], w: (W[i0] + (W[i1] - W[i0])*f)/20 + FX.dw[k] });
+  });
+  if (FX.on && F.dq){                                 // nobody is run through
+    pos.sort((a, b) => b.s - a.s);
+    for (let j = 1; j < pos.length; j++) for (let i = 0; i < j; i++){
+      const A = pos[i], B = pos[j];
+      if ((A.k === F.by && B.k === F.hit) || (A.k === F.hit && B.k === F.by)) continue;
+      if (Math.abs(A.w - B.w) < 0.95 && A.s - B.s < PAT_CLEAR) B.s = A.s - PAT_CLEAR;
+    }
+  }
+  RP.horses.forEach(h => { h.visible = false; });
+  for (const q of pos){
+    const k = q.k, h = RP.horses[k], s = q.s, w = q.w;
     h.visible = true;
-    const s = (S[i0] + (S[i1] - S[i0])*f)/10, w = (W[i0] + (W[i1] - W[i0])*f)/20;
-    const p = patWhere(s, w);
-    h.position.set(p.x, 0, p.z); h.rotation.y = yawOf(p.t);
+    const p = patWhere(s, w), c = FX.chk[k];
+    h.position.set(p.x, 0, p.z);
+    h.rotation.y = FX.yaw[k] ? yawOf({ hx: p.t.hx + FX.yaw[k]*p.t.rx, hz: p.t.hz + FX.yaw[k]*p.t.rz }) : yawOf(p.t);
     const prev = RP.prevS[k]; RP.prevS[k] = s*10;
     const moved = prev == null ? 0 : s - prev/10;
-    if (moved > 0) RP.phase[k] = (RP.phase[k] + moved*(1 + p.t.curv*w)/STRIDE_LEN) % 1;
+    if (moved > 0) RP.phase[k] = (RP.phase[k] + (1 - 0.4*c)*moved*(1 + p.t.curv*w)/STRIDE_LEN) % 1;   // his stride breaks
     poseHorse(h, RP.phase[k], 0.85, 0);
+    if (c > 0 || h.userData.pn) patCheckPose(h, RP.phase[k], c);
     const a = { k, s, w, d: TOT - s, x: p.x, z: p.z, t: p.t };
     at.push(a);
     if (k === F.by) off = a;
     if (k === F.vic) vic = a;
-  });
+    if (k === F.hit) hit = a;
+  }
+  const third = F.hit != null && F.hit !== F.vic && F.hit !== F.by ? hit : null;
   patRings[0].visible = !!off; if (off) patRings[0].position.set(off.x, 0, off.z);
   patRings[1].visible = !!vic; if (vic) patRings[1].position.set(vic.x, 0, vic.z);
-  const group = [off, vic].filter(Boolean).sort((a, b) => b.s - a.s);
+  patRings[2].visible = !!third; if (third) patRings[2].position.set(third.x, 0, third.z);
+  /* the impact and the check: the sound, the dirt, the crowd (a DQ only) */
+  if (FX.on && F.dq){
+    const Tc = patFxFor(F).Tc;
+    if (!RP.fx1 && T >= 0 && off && hit && F.by !== F.hit){
+      RP.fx1 = true; RP.gasp = 1; if (RP.on) patThud();
+      RP.puff[0] = { x: (off.x + hit.x)/2, z: (off.z + hit.z)/2, hx: hit.t.hx, hz: hit.t.hz };
+    }
+    if (!RP.fx2 && T >= Tc && vic){
+      RP.fx2 = true; RP.gasp = 1; if (RP.on){ patThud(); if (AC) clip('neigh', AC.currentTime, PAT_FAINT); }   // (RTR47.7) far off, barely there
+      RP.puff[1] = { x: vic.x + vic.t.hx, z: vic.z + vic.t.hz, hx: vic.t.hx, hz: vic.t.hz };
+    }
+    patPuff(patPuffs[0], RP.puff[0], T);
+    patPuff(patPuffs[1], RP.puff[1], T - Tc);
+    RP.gasp = Math.max(0, RP.gasp - dt*0.45);
+    if (AC && crowdGain){ crowdGain.gain.value = 0.015 + 0.16*RP.gasp; crowdFilter.frequency.value = 620 + 500*RP.gasp; }
+  }
+  const group = [off, vic, third].filter(Boolean).sort((a, b) => b.s - a.s);
   if (!group.length) group.push(at[0]);
   /* the middle of the two, along the track, and the cameras off that */
   let ms = 0, mw = 0;
@@ -11044,8 +11229,8 @@ function patrolFrame(dt){
   const mid = patWhere(ms, mw);
   _pt.set(mid.x, 1.2, mid.z);
   if (sh.cam === 'head'){
-    const up = patWhere(ms + 46, mw);
-    _pc.set(up.x, 5.5, up.z);
+    const hd = RP.headD || 46, up = patWhere(ms + hd, mw);      // (RTR47.6) the long lens, low
+    _pc.set(up.x, hd > 46 ? 4.0 : 5.5, up.z);
   } else {
     _pc.set(mid.x - mid.t.hx*16 + mid.t.rx*9, 24, mid.z - mid.t.hz*16 + mid.t.rz*9);
   }
@@ -11054,7 +11239,7 @@ function patrolFrame(dt){
   const dist = _pt.distanceTo(_pc);
   const fr = frameGroup(_pc, _pt, group, cam.aspect);
   let want = RP.fov;
-  if (fr){ _pt.copy(_pc).addScaledVector(fr.dir, dist); want = clamp(fr.fov*(sh.cam === 'air' ? 1.7 : 1.25), 9, 52); }
+  if (fr){ _pt.copy(_pc).addScaledVector(fr.dir, dist); want = clamp(fr.fov*(sh.cam === 'air' ? 1.7 : RP.headD > 46 ? 1.0 : 1.25), sh.cam === 'air' ? 9 : 3.5, 52); }
   if (!RP.camPos) RP.camPos = new THREE.Vector3();
   if (!isFinite(RP.look.x) || !isFinite(RP.fov) || !isFinite(RP.camPos.x)) RP.snap = true;
   if (RP.snap){ RP.look.copy(_pt); RP.camPos.copy(_pc); RP.fov = want; RP.snap = false; }
@@ -11071,7 +11256,12 @@ function patrolFrame(dt){
   /* the moment of the nudge */
   if (!RP.called && x >= F.at){
     RP.called = true; RP.callT = 1.6/Math.max(0.5, RP.speed);
-    rpCallEl.textContent = 'No. ' + D.pp[F.by] + ' nudges No. ' + D.pp[F.vic];
+    rpCallEl.textContent = patSay(F, D, false);
+  }
+  /* (RTR47.6) and the moment he checks, once the first has been read */
+  if (F.hit != null && !RP.called2 && RP.called && T >= Math.max(patFxFor(F).Tc, 0.9)){
+    RP.called2 = true; RP.callT = 2.4/Math.max(0.5, RP.speed);
+    rpCallEl.textContent = patSay(F, D, true);
   }
   RP.callT = Math.max(0, RP.callT - dt);
   rpCallEl.style.opacity = RP.callT > 0 ? '1' : '0';
