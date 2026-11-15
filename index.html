@@ -1077,6 +1077,8 @@
 <p>Races are run on a one-mile oval: two straights of about 400 metres joined by two sweeping turns. The finish line (the <em>wire</em>) is about a furlong and a half past the top of the stretch. Six and seven furlongs start from a chute off the backstretch and go round one turn. The mile and nine furlongs start in the homestretch and go round two. The mile and a quarter starts from a short chute off the head of the homestretch, also round two turns. The race card tells you which it is: One turn or Two turns.</p>
 <h4>Surfaces</h4>
 <p>A race can be on dirt, turf or synthetic. All three ride exactly the same: the surface changes what you&rsquo;re looking at, how much dust the field throws up and the sound of her hooves, and nothing else.</p>
+<h4>Light and weather</h4>
+<p>The sun stands where it would over Arcadia on the card&rsquo;s date at each race&rsquo;s post time, so the light moves through the afternoon: shadows swing round and lengthen from the first race to the fifth, and on a winter card the last race is run in low, warm light. Now and then a card is <strong>overcast</strong>, flat and grey with hardly a shadow, or <strong>rainy</strong>, with the far side lost in the murk, the track dark and shining and no dust off it. The race card gives the day&rsquo;s weather beside the post time. None of it changes how a race rides: a wet track is exactly as fast as a dry one.</p>
 <h4>Moving through the day</h4>
 <p>After each race the result screen offers <strong>Go to next race</strong>. After the fifth it reads <strong>Go to next day</strong>, and a fresh card is drawn for the new day. You can go Home between races whenever you like. The card, your place in it and any mount you&rsquo;ve taken are all saved, so you can close the game and pick up the day later.</p>
 <h4>Around the track</h4>
@@ -1436,6 +1438,7 @@
 <li><strong>The William Tell Overture,</strong> about thirteen seconds of it, the first time in a race you hold Ask down for a full second. A tap of Ask makes no sound.</li>
 <li><strong>The crack of the crop</strong>, and the <strong>first time</strong> you use it in a race, a neigh from her.</li>
 <li><strong>A bump</strong> whenever you make contact in the running: leaning on a horse, being checked for room or shut off, clipping heels, and when you nudge a horse or one nudges you. Past the wire the gallop-out is quiet.</li>
+<li><strong>Rain</strong>, a steady hiss, on a wet day.</li>
 <li><strong>Her cry</strong> if she goes down.</li>
 <li><strong>The stands going up</strong> as you hit the wire, when the winner is you.</li>
 </ul>
@@ -3843,7 +3846,7 @@
 /* which build this is, printed at the foot of the home page — worth having
    when the game is installed from the home screen and there is no address
    bar to tell you */
-const VERSION = 'RTR47.9';
+const VERSION = 'RTR47.11';
 const clamp = (v,a,b) => v<a?a:v>b?b:v;
 
 /* ══ the device ═════════════════════════════════════════════════════════
@@ -4404,21 +4407,18 @@ const scene = new THREE.Scene();
 /* One gradient does two jobs: it is the sky you see, and — run through the
    PMREM filter — the light that every surface reflects. That ambient term is
    most of what separates a lit scene from a flat one. */
-(function sky(){
-  const W = 1024, H = 512, HZ = H*0.5;          // the horizon sits halfway up
-  const c = document.createElement('canvas'); c.width = W; c.height = H;
-  const g = c.getContext('2d'), grad = g.createLinearGradient(0,0,0,H);
-  /* A real clear sky is deep overhead and only goes pale in a thin band at
-     the horizon. This same texture is also the ambient light, so anything
-     pale here lands on every surface in the scene. */
-  grad.addColorStop(0.00,'#0e3a94');   // zenith
-  grad.addColorStop(0.20,'#1a55ac');
-  grad.addColorStop(0.36,'#3878c2');
-  grad.addColorStop(0.47,'#7ba7cb');
-  grad.addColorStop(0.497,'#b3c6d2');  // the haze, kept narrow
-  grad.addColorStop(0.507,'#78855f');  // ground
-  grad.addColorStop(1.00,'#35442a');
-  g.fillStyle = grad; g.fillRect(0,0,W,H);
+/* (RTR47.11) The gradient is no longer fixed: paintSky() lays it down again
+   for the hour and the weather, and the mountains, the town and the trees
+   (skyScenery, painted once on a layer of their own) go over it. */
+/* A real clear sky is deep overhead and only goes pale in a thin band at
+   the horizon. This same texture is also the ambient light, so anything
+   pale here lands on every surface in the scene. */
+const SKY_STOPS = [0.00, 0.20, 0.36, 0.47, 0.497, 0.507, 1.00];   // zenith … the haze, kept narrow … ground
+const SKY_CLEAR = [0x0e3a94, 0x1a55ac, 0x3878c2, 0x7ba7cb, 0xb3c6d2, 0x78855f, 0x35442a];
+const SKY_LATE  = [0x1c4088, 0x3a639f, 0x7797b8, 0xd3c6b0, 0xf6d49c, 0x8a8054, 0x3d4026];   // a low sun: warm at the horizon
+const SKY_GREY  = [0x7f8992, 0x8c969e, 0x9ba4ab, 0xabb2b7, 0xb7bdc1, 0x6f7767, 0x3a4236];   // overcast
+const SKY_WET   = [0x5b646d, 0x667078, 0x737c84, 0x848c92, 0x8f969b, 0x565d52, 0x2e352c];   // rain
+function skyScenery(g, W, H, HZ){
 
   /* The San Gabriels standing over the backstretch, and Arcadia and the
      valley beyond the grandstand. Painted into the sky rather than built: at
@@ -4495,15 +4495,76 @@ const scene = new THREE.Scene();
     g.lineTo(x, HZ - Math.max(2, h));
   }
   g.lineTo(W, HZ); g.closePath(); g.fill();
-
-  const tex = new THREE.CanvasTexture(c);
-  tex.mapping = THREE.EquirectangularReflectionMapping;
-  tex.encoding = THREE.sRGBEncoding;
+}
+const SKY = { c:null, layer:null, tint:null, tex:null, env:null };
+const hex6 = n => '#' + ('00000' + (n >>> 0).toString(16)).slice(-6);
+const mixHex = (a, b, k) => new THREE.Color(a).lerp(new THREE.Color(b), k).getHex();
+/* L: stops (seven colours), and optionally tint [colour, alpha] washed over
+   the scenery, cloud (0..1, a mottled deck), glow {u, el, k} for the sun */
+function paintSky(L){
+  const W = 1024, H = 512, HZ = H*0.5;          // the horizon sits halfway up
+  const mk = () => { const c = document.createElement('canvas'); c.width = W; c.height = H; return c; };
+  if (!SKY.c){
+    SKY.c = mk(); SKY.layer = mk(); SKY.tint = mk();
+    skyScenery(SKY.layer.getContext('2d'), W, H, HZ);
+    SKY.tex = new THREE.CanvasTexture(SKY.c);
+    SKY.tex.mapping = THREE.EquirectangularReflectionMapping;
+    SKY.tex.encoding = THREE.sRGBEncoding;
+  }
+  const g = SKY.c.getContext('2d'), grad = g.createLinearGradient(0,0,0,H);
+  L.stops.forEach((c,i) => grad.addColorStop(SKY_STOPS[i], hex6(c)));
+  g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1;
+  g.fillStyle = grad; g.fillRect(0,0,W,H);
+  if (L.cloud){
+    /* a cloud deck is never one flat grey: big soft patches, lighter and
+       darker, flattened toward the horizon. The same deck every time. */
+    let rs = 47110;
+    const rnd = () => (rs = (rs*1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    g.save(); g.beginPath(); g.rect(0,0,W,HZ); g.clip();
+    for (let i=0; i<70; i++){
+      const x = rnd()*W, yy = rnd(), y = HZ*(1 - yy*yy)*0.98, r = 30 + rnd()*90, lite = rnd() < 0.5;
+      const a = (0.05 + rnd()*0.09)*L.cloud;
+      for (const ox of [-W, 0, W]){
+        g.save(); g.translate(x + ox, y); g.scale(1, 0.22 + 0.5*(1 - y/HZ));
+        const rg = g.createRadialGradient(0,0,0, 0,0,r);
+        rg.addColorStop(0, lite ? 'rgba(255,255,255,'+a+')' : 'rgba(40,46,54,'+a+')');
+        rg.addColorStop(1, lite ? 'rgba(255,255,255,0)' : 'rgba(40,46,54,0)');
+        g.fillStyle = rg; g.fillRect(-r,-r,2*r,2*r); g.restore();
+      }
+    }
+    g.restore();
+  }
+  if (L.glow){
+    /* the sun itself, and the brightness round it that grows as it drops */
+    const sx = L.glow.u*W, sy = HZ - L.glow.el/90*HZ, k = L.glow.k;
+    g.save(); g.beginPath(); g.rect(0,0,W,HZ); g.clip();
+    for (const ox of [-W, 0, W]){
+      const R = 70 + 90*k, halo = g.createRadialGradient(sx+ox,sy,0, sx+ox,sy,R);
+      halo.addColorStop(0, 'rgba(255,244,214,' + (0.50 + 0.25*k) + ')');
+      halo.addColorStop(0.25, 'rgba(255,232,190,' + (0.18 + 0.20*k) + ')');
+      halo.addColorStop(1, 'rgba(255,226,180,0)');
+      g.fillStyle = halo; g.fillRect(sx+ox-R, sy-R, 2*R, 2*R);
+      g.fillStyle = '#fffdf2'; g.beginPath(); g.arc(sx+ox, sy, 4.2, 0, 6.2832); g.fill();
+    }
+    g.restore();
+  }
+  if (L.tint && L.tint[1] > 0.004){
+    const t = SKY.tint.getContext('2d');
+    t.globalCompositeOperation = 'copy'; t.globalAlpha = 1; t.drawImage(SKY.layer, 0, 0);
+    t.globalCompositeOperation = 'source-atop'; t.globalAlpha = L.tint[1];
+    t.fillStyle = hex6(L.tint[0]); t.fillRect(0,0,W,H);
+    g.drawImage(SKY.tint, 0, 0);
+  } else g.drawImage(SKY.layer, 0, 0);
+  SKY.tex.needsUpdate = true;
   const pm = new THREE.PMREMGenerator(renderer);
-  scene.environment = pm.fromEquirectangular(tex).texture;
-  scene.background = tex;
+  const env = pm.fromEquirectangular(SKY.tex);
+  scene.environment = env.texture;
+  scene.background = SKY.tex;
   pm.dispose();
-})();
+  if (SKY.env) SKY.env.dispose();
+  SKY.env = env;
+}
+paintSky({ stops: SKY_CLEAR });
 scene.fog = new THREE.Fog(0x93b0c8, 170, 640);
 const camera = new THREE.PerspectiveCamera(78,1,0.1,760);
 camera.rotation.order = 'YXZ';
@@ -4519,7 +4580,8 @@ rail.layers.enable(1);
 scene.add(rail);
 const inset = {x:0,y:0,w:0,h:0}, inset2 = {x:0,y:0,w:0,h:0};
 
-scene.add(new THREE.HemisphereLight(0x9dc0e0, 0x4a5638, 0.30));
+const hemi = new THREE.HemisphereLight(0x9dc0e0, 0x4a5638, 0.30);
+scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff2da, 2.55);
 sun.castShadow = true;
 sun.shadow.mapSize.set(shadowN(), shadowN());     // (RTR43) 2048 on Full, 1024 below
@@ -4532,6 +4594,145 @@ SC.left = -34; SC.right = 34; SC.top = 34; SC.bottom = -34;
 SC.near = 1; SC.far = 140; SC.updateProjectionMatrix();
 const SUN_OFF = new THREE.Vector3(-34, 30, 22);
 scene.add(sun, sun.target);
+
+/* ══ (RTR47.11) the hour and the weather ═════════════════════════════════
+   Looks and sound only. No day rides differently from any other, the clock
+   and the chart never hear of it, and nothing is saved: the weather comes
+   off the day number and the sun off the calendar and the post time, so the
+   same card always has the same sky. */
+const WX = { kind:'clear', rain:0, wet:false, dust:1, rfn:360, rff:1500, el:36.5, az:237, key:'' };
+const WX_NAME = { clear:'Clear', overcast:'Overcast', rain:'Rain' };
+const postMin = i => 12*60 + 65 + i*33;       // minutes after midnight; see postAt
+/* Where the sun stands over Arcadia (34.14 N, 118.04 W) on that date at
+   that time on the clock, daylight saving included. The mountains are north
+   (-z) and east is +x, as the sky is painted. The old fixed sun, (-34,30,22),
+   was 36.5 degrees up in the south-west: about three o'clock in April. */
+function sunAt(ds, mins){
+  const dt = dateOfDs(ds), y = dt.getUTCFullYear();
+  const doy = (mo, d) => Math.round((Date.UTC(y, mo, d) - Date.UTC(y, 0, 0))/DAY_MS);
+  const sunday = (mo, n) => 1 + ((7 - new Date(Date.UTC(y, mo, 1)).getUTCDay()) % 7) + 7*(n-1);
+  const N = doy(dt.getUTCMonth(), dt.getUTCDate());
+  const dst = N >= doy(2, sunday(2,2)) && N < doy(10, sunday(10,1));
+  const rad = Math.PI/180, B = 2*Math.PI*(N - 81)/364;
+  const eot = 9.87*Math.sin(2*B) - 7.53*Math.cos(B) - 1.5*Math.sin(B);       // minutes
+  const solar = (mins - (dst ? 60 : 0) + 4*(120 - 118.04) + eot)/60;
+  const ha = 15*(solar - 12)*rad, dec = 23.44*rad*Math.sin(2*Math.PI*(284 + N)/365), lat = 34.14*rad;
+  const el = Math.asin(Math.sin(lat)*Math.sin(dec) + Math.cos(lat)*Math.cos(dec)*Math.cos(ha));
+  const az = Math.atan2(Math.sin(ha), Math.cos(ha)*Math.sin(lat) - Math.tan(dec)*Math.cos(lat)) + Math.PI;
+  return { el: el/rad, az: az/rad };
+}
+/* The odd grey or wet day. Arcadia's rain comes in winter and its low cloud
+   in late spring, so the chances follow the month. Day 1 is always clear.
+   Add ?sky=rain, ?sky=overcast or ?sky=clear to the address to see one. */
+const WX_WET  = [.16,.16,.13,.08,.04,.02,.01,.01,.03,.06,.10,.15];
+const WX_GREY = [.17,.16,.16,.16,.20,.24,.12,.08,.10,.14,.16,.17];
+function wxOfDay(d){
+  let force = null;
+  try { force = new URLSearchParams(location.search).get('sky'); } catch(e){}
+  if (WX_NAME[force]) return force;
+  if (d <= 1) return 'clear';
+  let x = Math.imul(d|0, 0x9E3779B1) ^ 0x4715b;
+  x = Math.imul(x ^ (x >>> 15), 0x85EBCA6B); x = Math.imul(x ^ (x >>> 13), 0xC2B2AE35); x ^= x >>> 16;
+  const r = (x >>> 0)/4294967296, m = dateOfDs(dsOfDay(d)).getUTCMonth();
+  return r < WX_WET[m] ? 'rain' : r < WX_WET[m] + WX_GREY[m] ? 'overcast' : 'clear';
+}
+/* Set the light for a race: day d, race i on the card (0 for the first). */
+function setSky(d, i){
+  const kind = wxOfDay(d), key = kind + '|' + d + '|' + i;
+  if (key === WX.key) return;
+  WX.key = key; WX.kind = kind;
+  const S = sunAt(dsOfDay(d), postMin(i));
+  const el = clamp(S.el, 14, 80), rad = Math.PI/180, len = 50.6;
+  WX.el = el; WX.az = S.az;
+  SUN_OFF.set(Math.sin(S.az*rad)*Math.cos(el*rad)*len, Math.sin(el*rad)*len, -Math.cos(S.az*rad)*Math.cos(el*rad)*len);
+  /* k: 0 with the sun well up, 1 with it low. Nothing warms above 38 degrees. */
+  const t = clamp((38 - el)/(38 - 14), 0, 1), k = t*t*(3 - 2*t);
+  /* The ground takes the sun by the sine of its height, so a noon sun would
+     bleach the track and a low one leave it dull. Half of that is given back. */
+  const lift = clamp(Math.sqrt(0.595/Math.sin(el*rad)), 0.80, 1.30);
+  const u = Math.atan2(SUN_OFF.z, SUN_OFF.x)/(2*Math.PI) + 0.5;
+  let L;
+  if (kind === 'clear'){
+    L = { stops: SKY_CLEAR.map((c,j) => mixHex(c, SKY_LATE[j], k)),
+          tint: [0xeac592, 0.30*k], glow: { u, el, k } };
+    sun.color.setHex(mixHex(0xfff2da, 0xffb974, k)); sun.intensity = 2.55*lift;
+    hemi.color.setHex(mixHex(0x9dc0e0, 0xc8bfbc, k)); hemi.groundColor.setHex(0x4a5638); hemi.intensity = 0.30;
+    scene.fog.color.setHex(mixHex(0x93b0c8, 0xcdbfa6, k)); scene.fog.near = 170; scene.fog.far = 640;
+    renderer.toneMappingExposure = 1.02;
+    WX.rain = 0; WX.wet = false; WX.dust = 1; WX.rfn = 360; WX.rff = 1500;
+  } else if (kind === 'overcast'){
+    L = { stops: SKY_GREY.map(c => mixHex(c, 0x6c747c, 0.22*k)), tint: [0xabb2b7, 0.46], cloud: 1 };
+    sun.color.setHex(0xeef0f2); sun.intensity = 0.62*(1 - 0.2*k);
+    hemi.color.setHex(0xc9d0d6); hemi.groundColor.setHex(0x4f5547); hemi.intensity = 0.78*(1 - 0.15*k);
+    scene.fog.color.setHex(mixHex(0xaeb5ba, 0x8d949a, 0.22*k)); scene.fog.near = 150; scene.fog.far = 580;
+    renderer.toneMappingExposure = 1.04;
+    WX.rain = 0; WX.wet = false; WX.dust = 1; WX.rfn = 330; WX.rff = 1350;
+  } else {
+    L = { stops: SKY_WET.map(c => mixHex(c, 0x4c545c, 0.25*k)), tint: [0x8a9197, 0.66], cloud: 0.8 };
+    sun.color.setHex(0xe4e8ec); sun.intensity = 0.26*(1 - 0.2*k);
+    hemi.color.setHex(0xb3bbc2); hemi.groundColor.setHex(0x474d42); hemi.intensity = 0.74*(1 - 0.15*k);
+    scene.fog.color.setHex(mixHex(0x8c9399, 0x70777e, 0.25*k)); scene.fog.near = 60; scene.fog.far = 400;
+    renderer.toneMappingExposure = 0.97;
+    WX.rain = 1; WX.wet = true; WX.dust = 0; WX.rfn = 150; WX.rff = 820;
+  }
+  paintSky(L);
+  rainFx.visible = WX.rain > 0;
+  if (typeof TEX !== 'undefined' && TEX[SURF]) applySurface();       // wet or dry
+  renderer.shadowMap.needsUpdate = true;
+}
+/* Rain. Streaks in a block of air that travels with whichever camera is
+   drawing: the shader wraps every drop into the block round the eye, so one
+   cloud of lines serves the saddle, the aerial, the big screen and the films
+   alike, and nothing is moved from JS but the clock. Each streak leans along
+   the way the drop is going past that camera, so from the saddle at speed
+   the rain comes at you, and from the stands it falls. */
+const RAIN_BOX = 46, RAIN_FALL = new THREE.Vector3(-2.2, -15.5, 1.1);
+const rainFx = (() => {
+  const n = Q.mode === 'full' ? 3200 : Q.mode === 'medium' ? 2100 : 1300;
+  const pos = new Float32Array(n*6), end = new Float32Array(n*2);
+  for (let i=0; i<n; i++){
+    const x = Math.random()*RAIN_BOX, y = Math.random()*RAIN_BOX, z = Math.random()*RAIN_BOX;
+    pos.set([x,y,z, x,y,z], i*6); end[i*2] = 0; end[i*2+1] = 1;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('aEnd', new THREE.BufferAttribute(end, 1));
+  const m = new THREE.ShaderMaterial({
+    transparent:true, depthWrite:false, fog:false,
+    uniforms:{ uOff:{value:new THREE.Vector3()}, uTail:{value:new THREE.Vector3(0,0.8,0)},
+               uBox:{value:RAIN_BOX}, uCol:{value:new THREE.Color(0xd4dbe2)}, uA:{value:0.34} },
+    vertexShader:`uniform vec3 uOff; uniform vec3 uTail; uniform float uBox; uniform float uA;
+      attribute float aEnd; varying float vA;
+      void main(){
+        vec3 p = mod(position + uOff - cameraPosition + uBox*0.5, uBox) - uBox*0.5;
+        float d = length(p);
+        vA = uA * smoothstep(uBox*0.5, uBox*0.30, d) * smoothstep(0.6, 2.4, d) * (1.0 - 0.45*aEnd);
+        gl_Position = projectionMatrix * viewMatrix * vec4(p + cameraPosition + uTail*aEnd, 1.0);
+      }`,
+    fragmentShader:`uniform vec3 uCol; varying float vA;
+      void main(){ gl_FragColor = vec4(uCol, vA); }` });
+  const o = new THREE.LineSegments(geo, m);
+  o.frustumCulled = false; o.visible = false; o.renderOrder = 5;
+  const seen = new Map(), v = new THREE.Vector3();
+  o.onBeforeRender = (r, s, cam) => {
+    const now = performance.now()/1000, U = m.uniforms;
+    U.uOff.value.set((RAIN_FALL.x*now) % RAIN_BOX, (RAIN_FALL.y*now) % RAIN_BOX, (RAIN_FALL.z*now) % RAIN_BOX);
+    /* how fast this camera is travelling, from where it was the last time it drew */
+    let c = seen.get(cam);
+    if (!c){ c = { p: new THREE.Vector3(), t: 0, v: new THREE.Vector3() }; seen.set(cam, c); }
+    cam.getWorldPosition(v);
+    const dt = now - c.t;
+    if (dt > 0.004){
+      if (dt < 0.25 && v.distanceTo(c.p) < 30*dt) c.v.copy(v).sub(c.p).divideScalar(dt); else c.v.set(0,0,0);
+      c.p.copy(v); c.t = now;
+    }
+    /* the tail trails back up the drop's path past this eye, a twentieth of a second of it */
+    U.uTail.value.copy(c.v).sub(RAIN_FALL).multiplyScalar(0.05);
+    m.uniformsNeedUpdate = true;
+  };
+  scene.add(o);
+  return o;
+})();
 
 const mat = (c, rough, metal) => new THREE.MeshStandardMaterial(
   {color:c, roughness: rough===undefined ? 0.88 : rough, metalness: metal||0});
@@ -4860,6 +5061,10 @@ function applySurface(){
   M_TRACK.color.setHex(0xffffff);
   M_TRACK.needsUpdate = true;
   M_DUST.color.setHex(SURF==='turf' ? 0x4e6b38 : SURF==='synth' ? 0x6f6058 : 0x8a6a4a);
+  if (WX.wet){                                 // (RTR47.11) rain: looks only
+    M_TRACK.roughness = SURF==='turf' ? 0.78 : SURF==='dirt' ? 0.46 : 0.52;
+    M_TRACK.color.setHex(SURF==='turf' ? 0xc4ccc0 : 0x8e8882);
+  }
 }
 
 function ribbon(samples){
@@ -7762,7 +7967,7 @@ const dust = new THREE.Points(dustGeo, M_DUST);
 dust.frustumCulled=false; scene.add(dust);
 let dustHead=0;
 function spawnDust(x,y,z,hx,hz){
-  const k = SURFACES[SURF].kick;
+  const k = SURFACES[SURF].kick * WX.dust;       // (RTR47.11) none in the rain
   const i=dustHead; dustHead=(dustHead+1)%PC;
   dustPos[i*3]=x; dustPos[i*3+1]=y; dustPos[i*3+2]=z;
   dustVel[i*3]=(-hx*5.5+(Math.random()-0.5)*3.0)*k;
@@ -7772,7 +7977,7 @@ function spawnDust(x,y,z,hx,hz){
 }
 
 /* ══ audio ══════════════════════════════════════════════════════════════ */
-let AC=null, master, windGain, windFilter, rumbleGain, crowdGain, crowdFilter, noiseBuf, gallopBus;
+let AC=null, master, windGain, windFilter, rumbleGain, crowdGain, crowdFilter, noiseBuf, gallopBus, rainGain;
 function initAudio(){
   if (AC) return;
   AC = new (window.AudioContext||window.webkitAudioContext)();
@@ -7792,6 +7997,7 @@ function initAudio(){
   const w = bed('lowpass', 300, 0.8); windFilter=w.f; windGain=w.g;
   const r = bed('lowpass', 150);      rumbleGain=r.g;
   const c = bed('bandpass', 620, 1.2); crowdFilter=c.f; crowdGain=c.g;
+  rainGain = bed('highpass', 2600, 0.5).g;     // (RTR47.11) the hiss the wind is kept clear of, on a wet day
   /* (RTR21) the recorded hoofbeats go through the going's filter */
   gallopBus = AC.createBiquadFilter(); gallopBus.type = 'lowpass';
   gallopBus.frequency.value = 20000; gallopBus.Q.value = 0.7; gallopBus.connect(master);
@@ -8033,7 +8239,7 @@ function gallopStride(power){
    race begins instead. */
 function hush(){
   if (!AC) return;
-  for (const g of [windGain, rumbleGain, crowdGain]){
+  for (const g of [windGain, rumbleGain, crowdGain, rainGain]){
     g.gain.cancelScheduledValues(AC.currentTime);
     g.gain.setTargetAtTime(0, AC.currentTime, 0.10);
   }
@@ -8446,6 +8652,7 @@ const cash2 = v => '$' + v.toFixed(2);
 function newRace(){
   const R = currentRace();
   clsIdx = R.cls; tripIdx = R.trip; SURF = R.surf;
+  setSky(DAY, RACE_NO);                        // (RTR47.11)
   const horse = ROSTER[mountId];
   mount = statsOf(horse); mount.name = horse.name;
   RACE = planRace(TRIPS[tripIdx].f);
@@ -9703,6 +9910,7 @@ function frame(now){
 
   if (AC && !hushed && raceState !== 'done'){
     windGain.gain.value = clamp((me.v-7)/46, 0, 0.105);
+    rainGain.gain.value = WX.rain*0.030;
     windFilter.frequency.value = 210 + me.v*13;
     rumbleGain.gain.value = clamp(rivals.filter(r=>Math.abs(r.s-me.s)<22).length*0.034,0,0.19);
     const lane = clamp(1 - (TOTAL-me.s)/(2.5*FURLONG), 0, 1);
@@ -10762,7 +10970,7 @@ function openReplay(data, back){
      from the stand is looking twice that far, so it is thinned while the
      replay runs. */
   RP.fog = [scene.fog.near, scene.fog.far];
-  scene.fog.near = 360; scene.fog.far = 1500;
+  scene.fog.near = WX.rfn; scene.fog.far = WX.rff;
   if (data.surf && data.surf !== SURF && TEX[data.surf]){ SURF = data.surf; applySurface(); }
   /* (RTR25) the same riders' faces as the race, where the replay names them (older ones don't) */
   /* (RTR28) and their saddle cloths, where the replay keeps the posts (older ones don't) */
@@ -11022,7 +11230,7 @@ function patFx(F, T){
     /* and the horse he hit is knocked off his line, further than he went */
     o.dw[F.hit] += fx.sgn*0.28*pEase(T/0.2)*(1 - 0.5*pEase((T - 0.6)/1));
     o.yaw[F.hit] += fx.sgn*0.20*pBump(T, 0, 0.18, 0.95);
-    if (F.hit !== F.vic) o.chk[F.hit] = 0.6*pBump(T, 0, 0.15, 1.0);
+    /* (RTR47.10) a bump alone doesn't bring his head up: only the check does */
   }
   /* the horse checked: up on the heels, then snatched up, and a length gone */
   const up = pEase((T - (Tc - 0.5))/0.4);
@@ -11156,7 +11364,7 @@ function openPatrol(data, back){
   [myHorse, myShadow, marker, gateGroup, dust, rpRing].forEach(hide);
   RP.surf = SURF;
   RP.fog = [scene.fog.near, scene.fog.far];
-  scene.fog.near = 360; scene.fog.far = 1500;
+  scene.fog.near = WX.rfn; scene.fog.far = WX.rff;
   if (data.surf && data.surf !== SURF && TEX[data.surf]){ SURF = data.surf; applySurface(); }
   RP.horses = data.ids.map((id, k) => { const h = makeHorse(id, id, data.jk ? riderSeed(data.jk[k]) : undefined,
     data.pp ? clothOf(id, data.pp[k]) : null); scene.add(h); return h; });
@@ -11480,7 +11688,7 @@ function pfStage(on, J){
     [myHorse, myShadow, marker, gateGroup, dust, rpRing, scene.getObjectByName('finishLine')].forEach(hide);
     patRings.forEach(hide);
     RP.horses.forEach(hide);
-    J.fog = [scene.fog.near, scene.fog.far]; scene.fog.near = 360; scene.fog.far = 1500;
+    J.fog = [scene.fog.near, scene.fog.far]; scene.fog.near = WX.rfn; scene.fog.far = WX.rff;
     J.surf = SURF;
     if (J.D.surf && J.D.surf !== SURF && TEX[J.D.surf]){ SURF = J.D.surf; applySurface(); }
     J.sun = [sun.position.clone(), sun.target.position.clone()];
@@ -11823,7 +12031,7 @@ function tvRender(src, cams){
   }
   /* a long lens looks a long way: thin the haze for it, as the replay does */
   const fn = scene.fog.near, ff = scene.fog.far;
-  scene.fog.near = Math.max(fn, 360); scene.fog.far = Math.max(ff, 1500);
+  scene.fog.near = Math.max(fn, WX.rfn); scene.fog.far = Math.max(ff, WX.rff);
   const hide = [marker, rpRing].filter(o => o.visible);
   hide.forEach(o => { o.visible = false; });
   TV.video.material = TV.blank;
@@ -12276,7 +12484,7 @@ function startParade(R){
   PV.hidden = [];
   for (const o of [gateGroup, marker, dust]) if (o && o.visible){ PV.hidden.push(o); o.visible = false; }
   PV.fog = [scene.fog.near, scene.fog.far];
-  scene.fog.near = 360; scene.fog.far = 1500;
+  scene.fog.near = WX.rfn; scene.fog.far = WX.rff;
   const mine = PV.field.find(f => f.mine);
   document.getElementById('pvHead').textContent = 'Race ' + (RACE_NO+1) + ' · ' + CLS().name;
   document.getElementById('pvSub').textContent = TRIPS[tripIdx].label + ' on the ' + SURFACES[SURF].label.toLowerCase();
@@ -12391,7 +12599,7 @@ function paradeFrame(dt){
 
   /* the stands murmur; nothing is galloping yet */
   if (AC && windGain){
-    windGain.gain.value = 0; rumbleGain.gain.value = 0;
+    windGain.gain.value = 0; rumbleGain.gain.value = 0; rainGain.gain.value = WX.rain*0.030;
     crowdGain.gain.value = 0.03; crowdFilter.frequency.value = 560;
   }
 
@@ -13585,7 +13793,7 @@ function paintProgram(){
     'Race ' + (RACE_NO+1) + ' of ' + CARD_ORDER.length;
   document.getElementById('pDist').innerHTML = ovalSVG(R);
   document.getElementById('pNo').textContent = ORDINAL[RACE_NO];
-  document.getElementById('pPost').textContent = 'Approx. post ' + R.post;
+  document.getElementById('pPost').textContent = 'Approx. post ' + R.post + ' \u00b7 ' + WX_NAME[wxOfDay(DAY)];
   document.getElementById('pCls').textContent = C.tab;
   document.getElementById('pPurse').textContent =
     'Purse ' + money(C.purse) + (C.claim ? ' \u00b7 claiming ' + money(C.claim) : '');
@@ -13824,6 +14032,7 @@ addEventListener('resize', resize);
 addEventListener('orientationchange', () => setTimeout(resize, 250));
 document.querySelectorAll('img[data-logo]').forEach(i => { i.src = document.getElementById('logoSrc').src; });
 loadBook();
+try { setSky(DAY, RACE_NO); } catch(e){}      // (RTR47.11) so a film opened from the home page has today's light
 loadForm();
 resumeDay();
 compactScenery(new Set([myHorse, myShadow, marker]));
