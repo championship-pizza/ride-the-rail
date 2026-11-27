@@ -49,7 +49,7 @@ second one uses it.
 
 | | |
 |---|---|
-| `index.html` | the whole game (RTR47.11) — one file, 3.1 MB with its sounds and the Rider's Guide embedded |
+| `index.html` | the whole game (RTR47.12) — one file, 3.1 MB with its sounds and the Rider's Guide embedded |
 | `three.min.js` | three.js r128, vendored so it works offline |
 | `manifest.webmanifest` | name, icons, colours, fullscreen landscape |
 | `sw.js` | the offline cache |
